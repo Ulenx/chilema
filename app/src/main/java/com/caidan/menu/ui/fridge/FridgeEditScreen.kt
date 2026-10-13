@@ -1,0 +1,585 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
+package com.caidan.menu.ui.fridge
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.caidan.menu.AppContainer
+import com.caidan.menu.data.local.entity.FridgeItem
+import com.caidan.menu.data.local.entity.Recipe
+import com.caidan.menu.ui.AppViewModelProvider
+import com.caidan.menu.ui.components.ChipRow
+import com.caidan.menu.ui.components.CoverImage
+import com.caidan.menu.ui.components.LoadingOverlay
+import com.caidan.menu.ui.components.SectionTitle
+import com.caidan.menu.util.ImageStore
+import com.caidan.menu.util.formatDate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
+
+/**
+ * 冰箱条目的新增/编辑页。
+ * 新增时可以先用小票或买菜截图让 AI 认名称和数量，再统一补分类和保质期；
+ * 也可以完全手动填。
+ */
+@Composable
+fun FridgeEditScreen(
+    container: AppContainer,
+    onClose: () -> Unit,
+) {
+    val viewModel: FridgeEditViewModel =
+        viewModel(factory = AppViewModelProvider.fridgeEdit(container))
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val recipes by viewModel.recipes.collectAsStateWithLifecycle()
+
+    val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // 两个识别入口用同一个相册选图器，靠它区分识别结果记成哪种来源
+    var pendingSource by remember { mutableStateOf(FridgeItem.SOURCE_RECEIPT) }
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val path = withContext(Dispatchers.IO) { ImageStore.copyIntoStore(context, uri) }
+            if (path == null) {
+                snackbar.showSnackbar("图片读取失败，请重新选择")
+            } else {
+                viewModel.importFromImage(path, pendingSource)
+            }
+        }
+    }
+
+    fun pick(source: String) {
+        pendingSource = source
+        picker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
+
+    // 条目自己的照片，和上面那个「选图给 AI 认」的入口不是一回事
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val path = withContext(Dispatchers.IO) { ImageStore.copyIntoStore(context, uri) }
+            if (path == null) {
+                snackbar.showSnackbar("图片读取失败，请重新选择")
+            } else {
+                viewModel.onPhotoSelected(path)
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.messages.collect { snackbar.showSnackbar(it) }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.saved.collect { onClose() }
+    }
+
+    val kindLabel = if (state.isIngredient) "食材" else "调料"
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (state.isEditing) "编辑$kindLabel" else "添加$kindLabel") },
+                navigationIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    TextButton(
+                        onClick = viewModel::save,
+                        enabled = state.canSave && !state.loading,
+                    ) {
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("保存")
+                    }
+                },
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
+        if (!state.initialized) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return@Scaffold
+        }
+
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (!state.isEditing) {
+                    item {
+                        AiImportCard(
+                            loading = state.loading,
+                            onPickReceipt = { pick(FridgeItem.SOURCE_RECEIPT) },
+                            onPickScreenshot = { pick(FridgeItem.SOURCE_SCREENSHOT) },
+                        )
+                    }
+                }
+
+                if (state.batching) {
+                    item {
+                        DraftListCard(
+                            drafts = state.drafts,
+                            onUpdate = viewModel::updateDraft,
+                            onRemove = viewModel::removeDraft,
+                            onAdd = viewModel::addDraft,
+                            onClearAll = viewModel::clearDrafts,
+                        )
+                    }
+                } else {
+                    item {
+                        Column {
+                            OutlinedTextField(
+                                value = state.name,
+                                onValueChange = viewModel::onNameChange,
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("名称") },
+                                placeholder = { Text("牛肉 / 生抽 / 西兰花") },
+                                singleLine = true,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = state.quantity,
+                                    onValueChange = viewModel::onQuantityChange,
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("数量") },
+                                    placeholder = { Text("500") },
+                                    singleLine = true,
+                                )
+                                OutlinedTextField(
+                                    value = state.unit,
+                                    onValueChange = viewModel::onUnitChange,
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("单位") },
+                                    placeholder = { Text("克 / 个 / 瓶") },
+                                    singleLine = true,
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            // 批量整理时多条共用一张图没意义，这行只在单条模式出现
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CoverImage(
+                                    path = state.photoPath,
+                                    modifier = Modifier.size(56.dp)
+                                        .clip(RoundedCornerShape(10.dp)),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                OutlinedButton(onClick = {
+                                    photoPicker.launch(
+                                        PickVisualMediaRequest(
+                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                        )
+                                    )
+                                }) {
+                                    Icon(
+                                        Icons.Filled.Image,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        if (state.photoPath.isNullOrBlank()) "加张图"
+                                        else "换一张"
+                                    )
+                                }
+                                if (!state.photoPath.isNullOrBlank()) {
+                                    IconButton(onClick = { viewModel.onPhotoSelected(null) }) {
+                                        Icon(Icons.Filled.Clear, contentDescription = "去掉图片")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Column {
+                        SectionTitle("归类", modifier = Modifier.padding(top = 0.dp))
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            val options = listOf(
+                                FridgeItem.BIG_INGREDIENT to "食材",
+                                FridgeItem.BIG_SEASONING to "调料",
+                            )
+                            options.forEachIndexed { index, (value, label) ->
+                                SegmentedButton(
+                                    selected = state.bigCategory == value,
+                                    onClick = { viewModel.onBigCategoryChange(value) },
+                                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                                ) { Text(label) }
+                            }
+                        }
+                        if (state.isIngredient) {
+                            Spacer(Modifier.height(8.dp))
+                            ChipRow(
+                                options = FridgeItem.CATEGORIES,
+                                selected = state.category.takeIf { it.isNotBlank() },
+                                onSelect = { viewModel.onCategoryChange(it.orEmpty()) },
+                                contentPadding = PaddingValues(0.dp),
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Column {
+                        SectionTitle("保质期", modifier = Modifier.padding(top = 0.dp))
+                        Text(
+                            text = "过期日期用来做临期提醒，不填就不会提醒。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        DateField(
+                            label = "购买日期",
+                            value = state.purchaseDate,
+                            onChange = viewModel::onPurchaseDateChange,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        DateField(
+                            label = "过期日期",
+                            value = state.expiryDate,
+                            onChange = viewModel::onExpiryDateChange,
+                        )
+                    }
+                }
+
+                item {
+                    RecipePicker(
+                        recipes = recipes,
+                        selectedId = state.recipeId,
+                        onSelect = viewModel::onRecipeChange,
+                    )
+                }
+
+                item {
+                    OutlinedTextField(
+                        value = state.note,
+                        onValueChange = viewModel::onNoteChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("备注（可选）") },
+                        placeholder = { Text("放在冷冻层 / 开了封…") },
+                        minLines = 2,
+                    )
+                }
+
+                item {
+                    Button(
+                        onClick = viewModel::save,
+                        enabled = state.canSave && !state.loading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (state.batching) "保存 ${state.drafts.size} 条" else "保存")
+                    }
+                }
+
+                item { Spacer(Modifier.height(16.dp)) }
+            }
+
+            if (state.loading) {
+                LoadingOverlay(message = state.loadingMessage)
+            }
+        }
+    }
+}
+
+/** 小票 / 买菜截图的识别入口。识别只给出名称和数量，分类与保质期由用户填。 */
+@Composable
+private fun AiImportCard(
+    loading: Boolean,
+    onPickReceipt: () -> Unit,
+    onPickScreenshot: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("AI 录入", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "拍小票或买菜订单截图，自动认出食材名称和数量，分类和保质期你自己填。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onPickReceipt, enabled = !loading) {
+                    Icon(
+                        Icons.Filled.PhotoCamera,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("小票识别")
+                }
+                OutlinedButton(onClick = onPickScreenshot, enabled = !loading) {
+                    Icon(
+                        Icons.Filled.DocumentScanner,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("买菜截图")
+                }
+            }
+        }
+    }
+}
+
+/** 识别回来的多条食材，逐条核对、改数量、删掉不想要的。 */
+@Composable
+private fun DraftListCard(
+    drafts: List<DraftItem>,
+    onUpdate: (Long, String, String, String) -> Unit,
+    onRemove: (Long) -> Unit,
+    onAdd: () -> Unit,
+    onClearAll: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("识别结果（${drafts.size} 条）", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onClearAll) { Text("改手动录入") }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "下面的归类、保质期和备注会套用到这 ${drafts.size} 条上。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            drafts.forEach { draft ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    OutlinedTextField(
+                        value = draft.name,
+                        onValueChange = { onUpdate(draft.localId, it, draft.quantity, draft.unit) },
+                        modifier = Modifier.weight(2f),
+                        placeholder = { Text("名称") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = draft.quantity,
+                        onValueChange = { onUpdate(draft.localId, draft.name, it, draft.unit) },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("数量") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = draft.unit,
+                        onValueChange = { onUpdate(draft.localId, draft.name, draft.quantity, it) },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("单位") },
+                        singleLine = true,
+                    )
+                    IconButton(onClick = { onRemove(draft.localId) }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "删掉这条")
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+            OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("再加一条")
+            }
+        }
+    }
+}
+
+/** 一个可清空的日期选择按钮。 */
+@Composable
+private fun DateField(
+    label: String,
+    value: Long?,
+    onChange: (Long?) -> Unit,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedButton(
+            onClick = { showPicker = true },
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(
+                text = if (value == null) "选择$label" else "$label：${formatDate(value)}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (value != null) {
+            IconButton(onClick = { onChange(null) }) {
+                Icon(Icons.Filled.Clear, contentDescription = "清除$label")
+            }
+        }
+    }
+
+    if (showPicker) {
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = value)
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { onChange(toLocalDayStart(it)) }
+                    showPicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("取消") }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+}
+
+/** 可选的「关联菜谱」下拉；选中的菜谱会显示在库存条目上。 */
+@Composable
+private fun RecipePicker(
+    recipes: List<Recipe>,
+    selectedId: Long?,
+    onSelect: (Long?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedName = recipes.firstOrNull { it.id == selectedId }?.name
+
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = selectedName?.let { "关联菜谱：$it" } ?: "关联菜谱（可选）",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("不关联") },
+                onClick = {
+                    onSelect(null)
+                    expanded = false
+                },
+            )
+            recipes.forEach { recipe ->
+                DropdownMenuItem(
+                    text = { Text(recipe.name) },
+                    onClick = {
+                        onSelect(recipe.id)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * DatePicker 给的是 UTC 当天 0 点，这里换成本地时区的当天 0 点，
+ * 否则在 UTC 以西的时区里，「还剩几天」会算少一天。
+ */
+private fun toLocalDayStart(utcMillis: Long): Long =
+    Instant.ofEpochMilli(utcMillis)
+        .atZone(ZoneOffset.UTC)
+        .toLocalDate()
+        .atStartOfDay(ZoneId.systemDefault())
+        .toInstant()
+        .toEpochMilli()

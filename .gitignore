@@ -1,0 +1,21 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea
+.DS_Store
+
+# 构建产物。注意不能只写 /build —— 那只盖住根目录，
+# app/build/ 照样会被提交进去（18MB 的 APK 加一堆中间产物）。
+build/
+/app/release
+
+/captures
+.externalNativeBuild
+.cxx
+
+# 打包产物不进版本库：APK 要靠源码构建出来，不是源码
+*.apk
+*.aab
+*.ap_
+*.dex

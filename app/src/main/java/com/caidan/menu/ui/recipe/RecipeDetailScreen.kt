@@ -450,7 +450,13 @@ private fun DeductDialog(
 private fun deductLineText(line: DeductLine): String {
     val reason = line.blockReason
     if (reason != null) {
-        return "库存 ${formatAmount(line.item.quantity, line.item.unit)} · $reason"
+        // 库存为 0 时 formatAmount 会把数量吞成空串，拼出「库存 个 · 已经用完了」这种半截话；
+        // 何况「库存 0」本身也没信息量，这一档直接让原因自己说话
+        return if (line.item.quantity <= 0.0) {
+            reason
+        } else {
+            "库存 ${formatAmount(line.item.quantity, line.item.unit)} · $reason"
+        }
     }
     val left = line.item.quantity - line.deduct
     // 扣完还剩 0 时不能走 formatAmount：它会把 0 显示成空串，只剩一个孤零零的单位

@@ -32,6 +32,21 @@ fun formatRating(value: Double): String {
     return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
 }
 
+/**
+ * 按打开的时间打个招呼。
+ *
+ * 只收小时数而不是自己取当前时间：取值那一侧留在 UI 里，这个函数就是纯的，好测。
+ *
+ * 分了四档而不是「早/中/晚」三档 —— 三档的话 11:00 到 18:00 全得算「中午好」，
+ * 下午三点跟人说「中午好」很怪。18 点后到凌晨都算晚上，半夜打开也别太较真。
+ */
+fun greetingAt(hour: Int): String = when (hour) {
+    in 5..10 -> "早上好"
+    in 11..13 -> "中午好"
+    in 14..17 -> "下午好"
+    else -> "晚上好"
+}
+
 /** 拼出「2 个」「500 克」这样的展示文本。 */
 fun formatAmount(quantity: Double, unit: String): String {
     val q = formatQuantity(quantity)

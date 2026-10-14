@@ -28,7 +28,6 @@ object AppViewModelProvider {
         initializer {
             RecipeEditViewModel(
                 repository = container.recipeRepository,
-                extractor = container.ingredientExtractor,
                 screenshotParser = container.screenshotParser,
                 recipeParser = container.recipeParser,
                 settings = container.settingsRepository,

@@ -4,7 +4,6 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.caidan.menu.data.ai.AiException
-import com.caidan.menu.data.ai.IngredientExtractor
 import com.caidan.menu.data.ai.ParsedRecipe
 import com.caidan.menu.data.ai.RecipeParser
 import com.caidan.menu.data.ai.ScreenshotParser
@@ -64,7 +63,6 @@ data class RecipeFormState(
 
 class RecipeEditViewModel(
     private val repository: RecipeRepository,
-    private val extractor: IngredientExtractor,
     private val screenshotParser: ScreenshotParser,
     private val recipeParser: RecipeParser,
     private val settings: SettingsRepository,
@@ -174,21 +172,31 @@ class RecipeEditViewModel(
 
     // ---- AI ----
 
-    /** 解析粘贴的文字，把识别出的食材合并进列表。 */
-    fun extractFromText() {
+    /**
+     * 解析粘贴的文字：食材合并进列表，空着的菜名/简介/做法补上。
+     *
+     * 走的是和「从链接导入」同一个 [RecipeParser]，所以粘一整篇菜谱正文能连做法
+     * 一起拿回来；只粘了一张食材清单也不会白跑 —— 那就只填食材，其余字段模型
+     * 按提示词要求留空。
+     */
+    fun parsePastedText() {
         val text = _state.value.pasteText
         if (text.isBlank()) {
             send("请先粘贴菜谱文字或做法描述")
             return
         }
         viewModelScope.launch {
-            setLoading(true, "AI 正在识别食材…")
+            setLoading(true, "AI 正在整理菜谱…")
             try {
                 val apiKey = settings.apiKey.first()
                 val model = settings.textModel.first()
-                val parsed = extractor.extract(apiKey, model, text)
-                mergeIngredients(parsed.map { Triple(it.name, it.quantity, it.unit) })
-                send("已识别 ${parsed.size} 种食材，请核对")
+                // minChars = 0：这是用户手动点的按钮，短到只有一张食材清单也照单全收
+                val parsed = recipeParser.parseContent(apiKey, model, text, minChars = 0)
+                val added = mergeIngredients(
+                    parsed.ingredients.map { Triple(it.name, it.quantity, it.unit) }
+                )
+                val filled = fillBlankFields(parsed)
+                send(fillMessage(filled, added))
             } catch (e: AiException) {
                 send(e.message ?: "解析失败，请重试")
             } catch (e: Exception) {
@@ -255,18 +263,32 @@ class RecipeEditViewModel(
         val url = extractUrl(text)
         val rest = if (url == null) text else text.replace(url, " ").trim()
 
-        // 整段原样留在粘贴框里：自动解析失败时用户还能手动点「AI 解析食材」重试
+        // 整段原样留在粘贴框里：自动解析失败时用户还能手动点「AI 整理菜谱」重试
         update { it.copy(pasteText = text, linkText = url.orEmpty()) }
 
         when {
+            // 视频平台的分享文案是「复制打开抖音」「打开小红书查看精彩内容」这类噪音，
+            // 冗长的文案会骗过下面那条长度判断，让整个链接压根不被抓 ——
+            // 所以只要认出是这些站点，有链接就先抓链接
+            url != null && isVideoPlatform(url) -> parseFromUrl(url)
             rest.length >= SHARED_TEXT_MIN_CHARS -> parseTextContent(text)
             url != null -> parseFromUrl(url)
             else -> send("分享过来的内容里没有链接，也不像菜谱正文。可以自己复制菜谱文字再粘贴。")
         }
     }
 
+    /**
+     * 短视频 / 图文社区。分享出来的都是「复制打开 App」的文案，
+     * 真正的内容得去链接里拿（而且多半只拿得到标题和简介 —— 做法在画面和口播里）。
+     */
+    private fun isVideoPlatform(url: String): Boolean =
+        VIDEO_HOSTS.any { url.contains(it, ignoreCase = true) }
+
     /** 抓网页并整理成菜谱。 */
     private fun parseFromUrl(url: String) {
+        // 先记下来再说：解析失败时这条链接就是用户唯一的收获，
+        // 不能因为没解析成功就连链接都不给留
+        rememberSourceLink(url)
         viewModelScope.launch {
             setLoading(true, "正在抓取网页…")
             try {
@@ -274,8 +296,14 @@ class RecipeEditViewModel(
                 val model = settings.textModel.first()
                 val parsed = recipeParser.parseUrl(apiKey, model, url)
                 applyParsedRecipe(parsed)
-                rememberSourceLink(url)
-                send("已从网页整理出菜谱，请核对后保存")
+                // 只认出菜名时说实话：别让用户以为食材和做法也一并填好了
+                send(
+                    if (parsed.steps.isBlank() && parsed.ingredients.isEmpty()) {
+                        "只认出菜名，做法请自己补充（视频里讲的做法得靠截图识别）"
+                    } else {
+                        "已从网页整理出菜谱，请核对后保存"
+                    }
+                )
             } catch (e: AiException) {
                 send(e.message ?: "导入失败，请重试")
             } catch (e: Exception) {
@@ -336,8 +364,52 @@ class RecipeEditViewModel(
         )
     }
 
-    /** 把识别出的食材合并进当前列表：跳过空行与重名项。 */
-    private fun mergeIngredients(items: List<Triple<String, Double, String>>) {
+    /**
+     * 只把原来空着的字段补上，已有内容一律不动。
+     *
+     * 和 [applyParsedRecipe] 的整份覆盖相对：粘贴框是「边粘边补」的地方，
+     * 手写的东西不能被 AI 冲掉。返回实际补上的项名，用于提示文案。
+     */
+    private fun fillBlankFields(parsed: ParsedRecipe): List<String> {
+        val s = _state.value
+        val filled = mutableListOf<String>()
+        if (s.name.isBlank() && parsed.name.isNotBlank()) filled += "菜名"
+        if (s.description.isBlank() && parsed.description.isNotBlank()) filled += "简介"
+        if (s.steps.isBlank() && parsed.steps.isNotBlank()) filled += "做法"
+
+        // 甜点标记得和烘焙参数一起落：不翻成甜点，那三个框填了也不会显示出来
+        val toDessert = parsed.isDessert && s.type != Recipe.TYPE_DESSERT
+        update {
+            it.copy(
+                name = it.name.ifBlank { parsed.name },
+                description = it.description.ifBlank { parsed.description },
+                steps = it.steps.ifBlank { parsed.steps },
+                type = if (toDessert) Recipe.TYPE_DESSERT else it.type,
+                bakingTemp = it.bakingTemp.ifBlank { parsed.bakingTempC?.toString().orEmpty() },
+                bakingTime = it.bakingTime.ifBlank { parsed.bakingTimeMin?.toString().orEmpty() },
+                servings = it.servings.ifBlank { parsed.servings?.toString().orEmpty() },
+            )
+        }
+        return filled
+    }
+
+    /** 拼提示语：只报实际补上的东西 —— 被空字段规则跳过的不算，免得说了没做。 */
+    private fun fillMessage(fields: List<String>, addedIngredients: Int): String {
+        val parts = fields.toMutableList()
+        if (addedIngredients > 0) parts += "$addedIngredients 种食材"
+        return if (parts.isEmpty()) {
+            "AI 没整理出新内容，可以手动补充"
+        } else {
+            "已补上 ${parts.joinToString("、")}，请核对"
+        }
+    }
+
+    /**
+     * 把识别出的食材合并进当前列表：跳过空行与重名项。
+     *
+     * @return 实际新增的条数（重名的没算）
+     */
+    private fun mergeIngredients(items: List<Triple<String, Double, String>>): Int {
         val existingNames = _state.value.ingredients
             .filter { it.name.isNotBlank() }
             .map { it.name.trim() }
@@ -358,6 +430,7 @@ class RecipeEditViewModel(
             val kept = s.ingredients.filter { it.name.isNotBlank() }
             s.copy(ingredients = kept + added)
         }
+        return added.size
     }
 
     // ---- 保存 ----
@@ -386,6 +459,9 @@ class RecipeEditViewModel(
                     bakingTimeMin = s.bakingTime.takeIf { s.isDessert }?.toIntOrNull(),
                     servings = s.servings.takeIf { s.isDessert }?.toIntOrNull(),
                     createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                    // 编辑表单里没有「在不在菜单」这一项，所以要照抄原值 ——
+                    // 否则改个错别字就把菜谱悄悄踢出菜单了
+                    inMenu = existing?.inMenu ?: false,
                 )
                 val ingredients = s.ingredients.map {
                     Ingredient(
@@ -429,6 +505,20 @@ class RecipeEditViewModel(
     private companion object {
         /** 正文短于这个长度就当它不是菜谱正文，转而试着抓链接。 */
         const val SHARED_TEXT_MIN_CHARS = 30
+
+        /**
+         * 分享文案必带「复制打开 App」的站点。命中就优先抓链接，
+         * 别让那段营销文案冒充菜谱正文。
+         *
+         * 目前只有 B站 能真拿到内容（官方 JSON 接口，见 `Bilibili`）；
+         * 其余几个抓不到正文会报错并提示改用截图 —— 但至少比拿噪音当正文强。
+         */
+        val VIDEO_HOSTS = listOf(
+            "douyin.com", "iesdouyin.com",
+            "xiaohongshu.com", "xhslink.com",
+            "bilibili.com", "b23.tv",
+            "kuaishou.com", "youtube.com", "youtu.be",
+        )
 
         /**
          * 保守取第一个 http(s) 链接：遇到空白或汉字就停 ——

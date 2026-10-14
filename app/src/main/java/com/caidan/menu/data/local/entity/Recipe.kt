@@ -1,5 +1,6 @@
 package com.caidan.menu.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -25,6 +26,17 @@ data class Recipe(
     val servings: Int? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /**
+     * 在不在「菜单」里。
+     *
+     * 菜单是一份自己挑的名单，不是全部菜谱 —— 所以这个标记得单独存下来才经得起重启。
+     * 默认 false：新菜谱不会自己蹦进菜单，得手动加。
+     *
+     * `@ColumnInfo(defaultValue = "0")` 必须和迁移里的 `DEFAULT 0` 对上，理由见
+     * [com.caidan.menu.data.local.AppDatabase] 的 MIGRATION_3_4。
+     */
+    @ColumnInfo(defaultValue = "0")
+    val inMenu: Boolean = false,
 ) {
     companion object {
         const val TYPE_DISH = "DISH"

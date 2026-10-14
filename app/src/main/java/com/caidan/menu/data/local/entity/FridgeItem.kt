@@ -38,23 +38,50 @@ data class FridgeItem(
     val photoPath: String? = null,
     val note: String = "",
     val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * 数量扣到 0 的时刻；数量大于 0 时为 null。
+     *
+     * 「已用完」是个过渡状态而不是归档：留够时间让用户反悔（还想买、还想看看照片），
+     * 之后由 [FridgeRepository.purgeUsedUp] 自动清掉。
+     */
+    val usedUpAt: Long? = null,
 ) {
     companion object {
-        /** 大类：食材 */
+        /** 大类：食材 —— 只有这一类再细分小类（肉类/蔬菜…） */
         const val BIG_INGREDIENT = "INGREDIENT"
 
         /** 大类：调料 */
         const val BIG_SEASONING = "SEASONING"
+
+        /** 大类：零食 */
+        const val BIG_SNACK = "SNACK"
+
+        /** 大类：酒柜 */
+        const val BIG_DRINK = "DRINK"
+
+        /**
+         * 全部分区，按展示顺序。
+         *
+         * 要加一个分区只改这里：页面上的分段按钮、编辑页的「归类」都从它派生。
+         * [bigCategory] 是个自由字符串列，加新值**不需要**数据库迁移。
+         */
+        val BIG_CATEGORIES = listOf(
+            BIG_INGREDIENT to "食材",
+            BIG_SEASONING to "调料",
+            BIG_SNACK to "零食",
+            BIG_DRINK to "酒柜",
+        )
 
         // 录入来源
         const val SOURCE_MANUAL = "MANUAL"
         const val SOURCE_RECEIPT = "RECEIPT"
         const val SOURCE_SCREENSHOT = "SCREENSHOT"
 
-        /** 食材的子分类（调料不细分） */
+        /** 食材的子分类（其余分区不细分） */
         val CATEGORIES = listOf("肉类", "蔬菜", "水产", "蛋奶", "水果", "主食", "其他")
 
+        /** 认不出来的值一律当食材，免得历史数据里的脏值让标题变成空字符串。 */
         fun bigCategoryLabel(value: String): String =
-            if (value == BIG_SEASONING) "调料" else "食材"
+            BIG_CATEGORIES.firstOrNull { it.first == value }?.second ?: "食材"
     }
 }

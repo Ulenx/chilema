@@ -57,34 +57,44 @@
 ### 方式一：用 Android Studio（推荐）
 
 1. 打开 Android Studio，选择 **Open**，指向本项目根目录。
-2. 首次打开时，Android Studio 会自动补全 `gradle/wrapper/gradle-wrapper.jar`
-   并同步 Gradle 与依赖（需要联网）。如果提示缺少 Gradle wrapper，按提示接受即可。
-3. 等待 Gradle Sync 完成。
-4. 点击工具栏的 **Run ▶**，选择模拟器或已用 USB 连接并开启调试的真机。
+2. 等待 Gradle Sync 完成（首次会下载依赖，需要联网）。
+3. 点击工具栏的 **Run ▶**，选择模拟器或已用 USB 连接并开启调试的真机。
 
 > 本机的 Android SDK 路径已经写进 `local.properties`（`sdk.dir`）。
 > 如果你的 SDK 装在其他位置，请修改该文件，或删除它让 Android Studio 重新生成。
 
 ### 方式二：命令行
 
-用 Android Studio 自带的 JDK 直接调用缓存中的 Gradle 发行版，
-**不需要** `gradle-wrapper.jar`（本机已实测通过）：
+wrapper 齐全，装好 JDK 17 后可以直接跑（首次会下载依赖，需要联网）：
+
+```bash
+gradlew.bat :app:assembleDebug     # Windows
+./gradlew :app:assembleDebug       # macOS / Linux
+```
+
+**如果卡在下载 Gradle 发行版**（`services.gradle.org` 会 307 跳到 CDN，
+国内常常连不上，报 `Read timed out`）—— 把 `gradle/wrapper/gradle-wrapper.properties`
+里的 `distributionUrl` 换成国内镜像即可，内容与官方一致：
+
+```properties
+distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip
+```
+
+网上没有这个文件也行：只要机器上已经有缓存过的 Gradle 8.7（比如装过 Android Studio），
+可以直接调它，配合 Android Studio 自带的 JDK，PATH 里没有 `java` 也不影响：
 
 ```bash
 # 1) 设置 JAVA_HOME 为 Android Studio 自带的 JDK（路径按你的安装位置调整）
 export JAVA_HOME="/g/Android Studio/jbr"          # Git Bash
 # 或 cmd：set JAVA_HOME=G:\Android Studio\jbr
 
-# 2) 用已缓存的 Gradle 直接构建（首次会下载依赖，需要联网）
+# 2) 定位已缓存的发行版（目录名因机器而异，Windows 上在 C:\Users\<你>\.gradle，
+#    注意别想当然用 $HOME —— 某些 Git Bash 里它指向别处）
+find ~/.gradle/wrapper/dists/gradle-8.7-bin -name gradle -type f
+
+# 3) 用上一步的路径直接构建
 "$HOME/.gradle/wrapper/dists/gradle-8.7-bin/*/gradle-8.7/bin/gradle" \
   -p "/path/to/caidan" :app:assembleDebug          # 换成你克隆下来的目录
-```
-
-如果你已经装好 JDK 17 且 wrapper jar 齐全，也可以用标准方式：
-
-```bash
-gradlew.bat :app:assembleDebug     # Windows
-./gradlew :app:assembleDebug       # macOS / Linux
 ```
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`，可直接安装到手机。

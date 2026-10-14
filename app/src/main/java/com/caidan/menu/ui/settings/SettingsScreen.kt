@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.caidan.menu.AppContainer
 import com.caidan.menu.data.repo.SettingsRepository
 import com.caidan.menu.ui.AppViewModelProvider
+import com.caidan.menu.ui.components.PageHeader
 import com.caidan.menu.ui.components.SectionTitle
 
 @Composable
@@ -60,7 +60,7 @@ fun SettingsScreen(container: AppContainer) {
     }
 
     Scaffold(
-        topBar = { CenterAlignedTopAppBar(title = { Text("设置") }) },
+        topBar = { PageHeader(title = "设置", subtitle = "填上 Key 才能用 AI 功能") },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LazyColumn(

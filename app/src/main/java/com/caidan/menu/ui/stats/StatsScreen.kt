@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -34,6 +33,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.caidan.menu.AppContainer
 import com.caidan.menu.data.local.entity.Recipe
 import com.caidan.menu.ui.AppViewModelProvider
+import com.caidan.menu.ui.components.PageHeader
 import com.caidan.menu.ui.components.SectionTitle
 import com.caidan.menu.ui.components.Tag
 import com.caidan.menu.util.formatDate
@@ -47,7 +47,7 @@ fun StatsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     Scaffold(
-        topBar = { CenterAlignedTopAppBar(title = { Text("统计") }) },
+        topBar = { PageHeader(title = "统计", subtitle = "一共做过多少道") },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),

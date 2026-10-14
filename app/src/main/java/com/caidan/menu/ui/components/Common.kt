@@ -2,6 +2,9 @@
 
 package com.caidan.menu.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -23,6 +26,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.StarHalf
+import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Star
@@ -37,10 +42,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +64,8 @@ import com.caidan.menu.ui.theme.StarGold
 import com.caidan.menu.ui.theme.StarGoldDark
 import com.caidan.menu.util.formatRating
 import java.io.File
+import kotlin.math.PI
+import kotlin.math.sin
 
 /** 空列表占位。 */
 @Composable
@@ -91,7 +104,9 @@ fun CoverImage(
     contentScale: ContentScale = ContentScale.Crop,
 ) {
     Box(
-        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+        // 封面区统一用暖琥珀：卡片正文是近米色，两块深浅拉开，
+        // 没照片的卡片才看得出「上面是图、下面是字」的分段
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
         contentAlignment = Alignment.Center,
     ) {
         if (path.isNullOrBlank() || !File(path).exists()) {
@@ -211,12 +226,44 @@ fun RecipeGridCard(
     modifier: Modifier = Modifier,
     /** 历次平均星级；没打过分的传 null。 */
     rating: Double? = null,
+    /** 在不在菜单里，角标用。 */
+    inMenu: Boolean = recipe.inMenu,
+    /** 传了才显示「加入菜单 / 移出菜单」的角标；不传就当普通卡片。 */
+    onToggleMenu: (() -> Unit)? = null,
 ) {
     val hasCover = !recipe.coverPhotoPath.isNullOrBlank() &&
         File(recipe.coverPhotoPath).exists()
 
+    // 刚加进菜单时抖三下、顺带弹一下，给个「收下了」的手感。
+    // 靠「上一次的值」判断是不是**刚**加进去的 —— 不然列表滚回来、卡片重新组合，
+    // 早就加过的那些也会一起抖。
+    var wasInMenu by remember { mutableStateOf(inMenu) }
+    val wobble = remember { Animatable(0f) }
+    LaunchedEffect(inMenu) {
+        if (inMenu && !wasInMenu) {
+            wobble.snapTo(0f)
+            wobble.animateTo(1f, tween(durationMillis = 420, easing = LinearEasing))
+        }
+        wasInMenu = inMenu
+    }
+    val phase = wobble.value * PI.toFloat()
+    val angle = sin(phase * 3f) * 4f
+    val pop = 1f + 0.04f * sin(phase)
+
     Card(
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                rotationZ = angle
+                scaleX = pop
+                scaleY = pop
+            }
+            .clickable(onClick = onClick),
+        // 正文这块压到近米色。用默认的 surfaceContainerLow 跟上面的琥珀只差
+        // 几个色阶，整张卡看着糊成一块
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
@@ -226,7 +273,7 @@ fun RecipeGridCard(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .padding(12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -237,6 +284,34 @@ fun RecipeGridCard(
                         textAlign = TextAlign.Center,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            // 加入/移出菜单的角标。垫一层实心底才压得住深浅不一的封面图
+            if (onToggleMenu != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .clickable(onClick = onToggleMenu),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (inMenu) {
+                            Icons.Filled.CheckCircle
+                        } else {
+                            Icons.Filled.AddCircle
+                        },
+                        contentDescription = if (inMenu) "移出菜单" else "加入菜单",
+                        tint = if (inMenu) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }

@@ -2,6 +2,7 @@
 
 package com.caidan.menu.ui.fridge
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -75,12 +77,14 @@ import com.caidan.menu.ui.AppViewModelProvider
 import com.caidan.menu.ui.components.ChipRow
 import com.caidan.menu.ui.components.CoverImage
 import com.caidan.menu.ui.components.LoadingOverlay
+import com.caidan.menu.ui.components.PhotoCropper
 import com.caidan.menu.ui.components.SectionTitle
 import com.caidan.menu.util.ImageStore
 import com.caidan.menu.util.formatDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -104,42 +108,97 @@ fun FridgeEditScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // 两个识别入口用同一个相册选图器，靠它区分识别结果记成哪种来源
-    var pendingSource by remember { mutableStateOf(FridgeItem.SOURCE_RECEIPT) }
+    // 这张图是给谁用的。拍照得先备好中转 URI 再喊相机，回来时要知道往哪儿送，
+    // 所以相册和相机两条路都认它。
+    var target by remember { mutableStateOf(PhotoTarget.RECEIPT) }
+    // 相机的输出位置：拍之前就定好，拍完从这儿读回来
+    var captureUri by remember { mutableStateOf<Uri?>(null) }
+    // 正在问「拍照还是从相册选」
+    var askingSource by remember { mutableStateOf(false) }
+    // 已经拿到图、正等用户在裁剪页里定构图。null = 没在裁
+    var croppingPath by remember { mutableStateOf<String?>(null) }
+
+    val hasCamera = remember { ImageStore.canTakePhoto(context) }
+
+    fun usePhoto(path: String) {
+        when (target) {
+            PhotoTarget.RECEIPT -> viewModel.importFromImage(path, FridgeItem.SOURCE_RECEIPT)
+            PhotoTarget.SCREENSHOT -> viewModel.importFromImage(path, FridgeItem.SOURCE_SCREENSHOT)
+            // 条目照片先进 1:1 裁剪页，让用户自己定构图
+            PhotoTarget.ITEM -> croppingPath = path
+        }
+    }
+
+    /**
+     * @param tempSource 这张图是不是我们自己 FileProvider 里的中转文件（相机拍的）。
+     *   是的话复制完就把它删掉，免得 cache 越堆越多。相册来的 content:// 绝不能碰。
+     */
+    fun acceptUri(uri: Uri, tempSource: Boolean = false) {
+        scope.launch {
+            val path = withContext(Dispatchers.IO) { ImageStore.copyIntoStore(context, uri) }
+            // 必须在复制**之后**删：copyIntoStore 是挂起的，先删就把源文件抽走了
+            if (tempSource) {
+                withContext(Dispatchers.IO) { runCatching { uri.path?.let { File(it).delete() } } }
+            }
+            if (path == null) {
+                snackbar.showSnackbar("图片读取失败，请重新选一张")
+            } else {
+                usePhoto(path)
+            }
+        }
+    }
+
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        scope.launch {
-            val path = withContext(Dispatchers.IO) { ImageStore.copyIntoStore(context, uri) }
-            if (path == null) {
-                snackbar.showSnackbar("图片读取失败，请重新选择")
-            } else {
-                viewModel.importFromImage(path, pendingSource)
-            }
+    ) { uri -> uri?.let(::acceptUri) }
+
+    val camera = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { ok ->
+        val uri = captureUri
+        captureUri = null
+        // 用户在相机里按了取消：什么都没拍，别去读那个空文件
+        if (ok && uri != null) acceptUri(uri, tempSource = true)
+    }
+
+    fun pickFor(t: PhotoTarget) {
+        target = t
+        // 这台设备没相机应用就直接走相册，别让人白点一下
+        if (hasCamera) askingSource = true else picker.launch(PICK_IMAGE_ONLY)
+    }
+
+    fun takePhoto() {
+        askingSource = false
+        val uri = runCatching { ImageStore.newCaptureUri(context) }.getOrNull()
+        if (uri == null) {
+            scope.launch { snackbar.showSnackbar("没法准备拍照文件，改用相册选图") }
+            picker.launch(PICK_IMAGE_ONLY)
+            return
+        }
+        captureUri = uri
+        runCatching { camera.launch(uri) }.onFailure {
+            captureUri = null
+            scope.launch { snackbar.showSnackbar("这台设备没有可用的相机应用") }
         }
     }
 
-    fun pick(source: String) {
-        pendingSource = source
-        picker.launch(
-            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+    if (askingSource) {
+        AlertDialog(
+            onDismissRequest = { askingSource = false },
+            title = { Text("图片来源") },
+            text = { Text("现拍一张，或从相册 / 截图里挑一张。") },
+            confirmButton = {
+                TextButton(onClick = ::takePhoto) { Text("拍照") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        askingSource = false
+                        picker.launch(PICK_IMAGE_ONLY)
+                    }
+                ) { Text("从相册选") }
+            },
         )
-    }
-
-    // 条目自己的照片，和上面那个「选图给 AI 认」的入口不是一回事
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        scope.launch {
-            val path = withContext(Dispatchers.IO) { ImageStore.copyIntoStore(context, uri) }
-            if (path == null) {
-                snackbar.showSnackbar("图片读取失败，请重新选择")
-            } else {
-                viewModel.onPhotoSelected(path)
-            }
-        }
     }
 
     LaunchedEffect(Unit) {
@@ -149,7 +208,29 @@ fun FridgeEditScreen(
         viewModel.saved.collect { onClose() }
     }
 
-    val kindLabel = if (state.isIngredient) "食材" else "调料"
+    val kindLabel = FridgeItem.bigCategoryLabel(state.bigCategory)
+
+    // 裁剪是个整屏的模态步骤，直接盖掉下面整套界面。
+    // 取消时不删已落地的原图 —— 相机拍的那张系统相册里没有，删了就真没了
+    val pendingCrop = croppingPath
+    if (pendingCrop != null) {
+        PhotoCropper(
+            path = pendingCrop,
+            onCancel = { croppingPath = null },
+            onCropped = { cropped ->
+                scope.launch {
+                    val saved = withContext(Dispatchers.IO) {
+                        ImageStore.saveBitmap(context, cropped, "cover")
+                    }
+                    cropped.recycle()
+                    croppingPath = null
+                    // 存不下就退回用没裁的原图，别让用户白裁一遍
+                    viewModel.onPhotoSelected(saved ?: pendingCrop)
+                }
+            },
+        )
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -191,8 +272,8 @@ fun FridgeEditScreen(
                     item {
                         AiImportCard(
                             loading = state.loading,
-                            onPickReceipt = { pick(FridgeItem.SOURCE_RECEIPT) },
-                            onPickScreenshot = { pick(FridgeItem.SOURCE_SCREENSHOT) },
+                            onPickReceipt = { pickFor(PhotoTarget.RECEIPT) },
+                            onPickScreenshot = { pickFor(PhotoTarget.SCREENSHOT) },
                         )
                     }
                 }
@@ -246,13 +327,7 @@ fun FridgeEditScreen(
                                         .clip(RoundedCornerShape(10.dp)),
                                 )
                                 Spacer(Modifier.width(12.dp))
-                                OutlinedButton(onClick = {
-                                    photoPicker.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                }) {
+                                OutlinedButton(onClick = { pickFor(PhotoTarget.ITEM) }) {
                                     Icon(
                                         Icons.Filled.Image,
                                         contentDescription = null,
@@ -278,10 +353,7 @@ fun FridgeEditScreen(
                     Column {
                         SectionTitle("归类", modifier = Modifier.padding(top = 0.dp))
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                            val options = listOf(
-                                FridgeItem.BIG_INGREDIENT to "食材",
-                                FridgeItem.BIG_SEASONING to "调料",
-                            )
+                            val options = FridgeItem.BIG_CATEGORIES
                             options.forEachIndexed { index, (value, label) ->
                                 SegmentedButton(
                                     selected = state.bigCategory == value,
@@ -381,7 +453,8 @@ private fun AiImportCard(
             Text("AI 录入", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "拍小票或买菜订单截图，自动认出食材名称和数量，分类和保质期你自己填。",
+                text = "现拍张小票、或从相册选一张买菜订单截图，自动认出名称和数量；" +
+                    "分区和保质期你自己填。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -409,6 +482,13 @@ private fun AiImportCard(
         }
     }
 }
+
+/** 这次选的图是给谁用的：给小票识别、给买菜截图识别，还是当条目自己的照片。 */
+private enum class PhotoTarget { RECEIPT, SCREENSHOT, ITEM }
+
+/** 相册选图固定只要图片，抽出来免得三处各写一遍。 */
+private val PICK_IMAGE_ONLY =
+    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
 
 /** 识别回来的多条食材，逐条核对、改数量、删掉不想要的。 */
 @Composable

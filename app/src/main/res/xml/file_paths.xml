@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    只把 cacheDir/camera 这一个子目录开放给相机应用。
+    拍完的照片会立刻被读走、压进私有目录，这里纯粹是中转，
+    所以用 cache-* 而不是 files-*：系统空间紧张时可以自己清掉。
+-->
+<paths>
+    <cache-path name="camera" path="camera/" />
+</paths>

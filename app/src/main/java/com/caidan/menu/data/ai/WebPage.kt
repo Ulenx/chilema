@@ -16,13 +16,22 @@ import java.util.concurrent.TimeUnit
  * 只用 OkHttp，不引入 Jsoup —— 抓下来的东西是给模型看的，不需要精确的 DOM，
  * 粗糙的文本对模型够用（和 [extractJson] 的「容错优先」一个思路）。
  */
-object WebPage {
+/**
+ * 抓网页（[WebPage]）和调平台接口（[Bilibili]）共用同一个 client，复用连接池。
+ * OkHttp 本来就建议全应用共用一个。
+ */
+internal val sharedHttpClient = OkHttpClient.Builder()
+    .connectTimeout(15, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .followRedirects(true)
+    .build()
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
+/** 多数站点会拒绝默认的 OkHttp UA，这里装成浏览器。 */
+internal const val BROWSER_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+object WebPage {
 
     /** 正文超过这个长度就截断，免得把 token 烧光。 */
     private const val MAX_CHARS = 12_000
@@ -38,10 +47,10 @@ object WebPage {
         val httpUrl = normalizeUrl(url)
 
         val (bytes, contentType) = try {
-            http.newCall(
+            sharedHttpClient.newCall(
                 Request.Builder()
                     .url(httpUrl)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", BROWSER_USER_AGENT)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                     .build()
@@ -109,11 +118,6 @@ object WebPage {
     }
 
     private const val EMPTY_HINT = "网页内容为空，可以改用「截图识别」。"
-
-    /** 多数站点会拒绝默认的 OkHttp UA，这里装成浏览器。 */
-    private const val USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 }
 
 /** 块级标签换成换行，其余标签直接去掉（中文不靠空格分词，去掉比换空格好）。 */

@@ -175,7 +175,7 @@ fun RecipeEditScreen(
                         loading = state.loading,
                         onPasteChange = viewModel::onPasteTextChange,
                         onLinkChange = viewModel::onLinkChange,
-                        onExtract = viewModel::extractFromText,
+                        onParseText = viewModel::parsePastedText,
                         onImportUrl = viewModel::importFromUrl,
                         onPickScreenshot = {
                             screenshotPicker.launch(
@@ -314,7 +314,7 @@ private fun AiToolsCard(
     loading: Boolean,
     onPasteChange: (String) -> Unit,
     onLinkChange: (String) -> Unit,
-    onExtract: () -> Unit,
+    onParseText: () -> Unit,
     onImportUrl: () -> Unit,
     onPickScreenshot: () -> Unit,
 ) {
@@ -378,10 +378,10 @@ private fun AiToolsCard(
                     Spacer(Modifier.width(6.dp))
                     Text("从链接导入")
                 }
-                OutlinedButton(onClick = onExtract, enabled = !loading) {
+                OutlinedButton(onClick = onParseText, enabled = !loading) {
                     Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("AI 解析食材")
+                    Text("AI 整理菜谱")
                 }
                 OutlinedButton(onClick = onPickScreenshot, enabled = !loading) {
                     Icon(Icons.Filled.DocumentScanner, contentDescription = null, modifier = Modifier.size(18.dp))

@@ -39,6 +39,14 @@ interface RecipeDao {
     @Query("UPDATE recipes SET cookCount = MAX(cookCount - 1, 0), lastCookedAt = (SELECT MAX(cookedAt) FROM cook_records WHERE recipeId = :recipeId) WHERE id = :recipeId")
     suspend fun decrementCookCount(recipeId: Long)
 
+    /**
+     * 把一道菜加进 / 移出「菜单」。
+     *
+     * 不动 `updatedAt`：改的是「要不要做它」，不是菜谱内容本身。
+     */
+    @Query("UPDATE recipes SET inMenu = :inMenu WHERE id = :recipeId")
+    suspend fun setInMenu(recipeId: Long, inMenu: Boolean)
+
     @Query("SELECT COUNT(*) FROM recipes")
     fun observeTotalCount(): Flow<Int>
 

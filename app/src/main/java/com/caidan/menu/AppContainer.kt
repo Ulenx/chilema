@@ -2,7 +2,6 @@ package com.caidan.menu
 
 import android.content.Context
 import com.caidan.menu.data.ai.FridgeParser
-import com.caidan.menu.data.ai.IngredientExtractor
 import com.caidan.menu.data.ai.QwenClient
 import com.caidan.menu.data.ai.RecipeParser
 import com.caidan.menu.data.ai.ScreenshotParser
@@ -35,7 +34,6 @@ class AppContainer(context: Context) {
     val pendingImport = PendingImport()
 
     private val qwenClient = QwenClient()
-    val ingredientExtractor = IngredientExtractor(qwenClient)
     val screenshotParser = ScreenshotParser(qwenClient)
     val fridgeParser = FridgeParser(qwenClient)
     val recipeParser = RecipeParser(qwenClient)

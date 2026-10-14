@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -62,9 +63,27 @@ class ShoppingViewModel(
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
 
-    /** 全部菜谱与甜点，供勾选。 */
+    /**
+     * 菜单里挑好的菜，供勾选。
+     *
+     * 只列 [Recipe.inMenu] 的 —— 菜单是自己在这份名单里挑出来的，
+     * 不是全部菜谱。
+     */
     val recipes: StateFlow<List<Recipe>> = repository.observeAll()
+        .map { list -> list.filter { it.inMenu } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * 把一道菜移出菜单。菜谱本身不动，只是不进这份名单了 ——
+     * 想加回来去菜谱页点卡片右上角的角标。
+     *
+     * 顺手把它从本次勾选里去掉：留着的话它会以「已选」的身份留在计数里，
+     * 生成清单时又被 [generateList] 忽略，对不上账。
+     */
+    fun removeFromMenu(recipeId: Long) {
+        _state.value = _state.value.copy(selectedIds = _state.value.selectedIds - recipeId)
+        viewModelScope.launch { repository.setInMenu(recipeId, false) }
+    }
 
     fun toggleSelection(id: Long) {
         _state.value = _state.value.let { s ->
@@ -88,9 +107,10 @@ class ShoppingViewModel(
         viewModelScope.launch {
             _state.value = _state.value.copy(generating = true)
             try {
-                // 已经过期的库存不算「家里还有」，不能拿它抵掉购物项
+                // 已经过期的、以及做菜扣到 0 的，都不算「家里还有」，
+                // 否则拿一条空库存就能把购物项抵掉，清单上显示「冰箱已有」却拿不出东西
                 val stockByName = fridgeRepository.observeAll().first()
-                    .filter { expiryStatusOf(it.expiryDate) != ExpiryStatus.EXPIRED }
+                    .filter { it.quantity > 0.0 && expiryStatusOf(it.expiryDate) != ExpiryStatus.EXPIRED }
                     .groupBy { it.name.trim() }
 
                 val buckets = linkedMapOf<String, ShoppingItem>()

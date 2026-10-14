@@ -74,6 +74,10 @@ class RecipeRepository(
 
     suspend fun deleteRecipe(recipe: Recipe) = recipeDao.delete(recipe)
 
+    /** 把一道菜加进 / 移出「菜单」。只动名单，菜谱本身不受影响。 */
+    suspend fun setInMenu(recipeId: Long, inMenu: Boolean) =
+        recipeDao.setInMenu(recipeId, inMenu)
+
     /** 清空全部数据（设置页的「清除数据」）。 */
     suspend fun deleteAllRecipes() = recipeDao.deleteAll()
 

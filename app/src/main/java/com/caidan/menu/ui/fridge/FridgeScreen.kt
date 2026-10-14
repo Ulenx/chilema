@@ -2,34 +2,40 @@
 
 package com.caidan.menu.ui.fridge
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Kitchen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -60,8 +66,9 @@ import com.caidan.menu.data.local.entity.FridgeItem
 import com.caidan.menu.ui.AppViewModelProvider
 import com.caidan.menu.ui.components.ChipRow
 import com.caidan.menu.ui.components.CoverImage
+import com.caidan.menu.ui.components.CompactSearchField
 import com.caidan.menu.ui.components.EmptyState
-import com.caidan.menu.ui.components.Tag
+import com.caidan.menu.ui.components.PageHeader
 import com.caidan.menu.ui.theme.ExpiryExpired
 import com.caidan.menu.ui.theme.ExpiryExpiredDark
 import com.caidan.menu.ui.theme.ExpiryNear
@@ -99,7 +106,29 @@ fun FridgeScreen(
     }
 
     Scaffold(
-        topBar = { CenterAlignedTopAppBar(title = { Text("我的冰箱") }) },
+        topBar = {
+            PageHeader(
+                title = "我的冰箱",
+                subtitle = when (state.bigCategory) {
+                    FridgeItem.BIG_SEASONING -> "调料还够不够用"
+                    FridgeItem.BIG_SNACK -> "囤的零食还剩多少"
+                    FridgeItem.BIG_DRINK -> "酒柜里都存了什么"
+                    else -> "看看冰箱里还有什么"
+                },
+                actions = {
+                    // 过期提醒挪到标题右边：原来它横在内容顶上白占 56dp，
+                    // 手机竖屏上把网格挤得只剩一条缝
+                    ExpiryChips(
+                        nearCount = state.nearCount,
+                        expiredCount = state.expiredCount,
+                        usedUpCount = state.usedUpCount,
+                        onNearClick = { viewModel.onExpiryFilterChange(ExpiryFilter.NEAR) },
+                        onExpiredClick = { viewModel.onExpiryFilterChange(ExpiryFilter.EXPIRED) },
+                        onUsedUpClick = { viewModel.onExpiryFilterChange(ExpiryFilter.USED_UP) },
+                    )
+                },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             FloatingActionButton(onClick = onNewItem) {
@@ -113,10 +142,7 @@ fun FridgeScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
-                val options = listOf(
-                    FridgeItem.BIG_INGREDIENT to "食材",
-                    FridgeItem.BIG_SEASONING to "调料",
-                )
+                val options = FridgeItem.BIG_CATEGORIES
                 options.forEachIndexed { index, (value, label) ->
                     SegmentedButton(
                         selected = state.bigCategory == value,
@@ -126,72 +152,76 @@ fun FridgeScreen(
                 }
             }
 
-            ExpiryBanner(
-                nearCount = state.nearCount,
-                expiredCount = state.expiredCount,
-                onNearClick = { viewModel.onExpiryFilterChange(ExpiryFilter.NEAR) },
-                onExpiredClick = { viewModel.onExpiryFilterChange(ExpiryFilter.EXPIRED) },
-            )
-
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = viewModel::onQueryChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("搜索食材或备注") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (state.query.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.onQueryChange("") }) {
-                            Icon(Icons.Filled.Clear, contentDescription = "清空")
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = MaterialTheme.shapes.large,
-            )
-
-            // 调料不再细分，所以只有食材大类才出子分类
-            if (state.isIngredient && state.categories.isNotEmpty()) {
-                ChipRow(
-                    options = state.categories,
-                    selected = state.category,
-                    onSelect = viewModel::onCategoryChange,
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-
-            ChipRow(
-                options = ExpiryFilter.entries.map { it.label },
-                selected = state.expiryFilter.label,
-                onSelect = { label ->
-                    ExpiryFilter.entries.firstOrNull { it.label == label }
-                        ?.let(viewModel::onExpiryFilterChange)
-                },
-                allowClear = false,
-            )
-
-            if (state.rows.isEmpty()) {
-                EmptyState(
-                    text = when {
-                        state.totalInBigCategory > 0 -> "没有符合条件的条目"
-                        state.isIngredient -> "还没有食材，点右下角 + 添加，或用收据/截图识别"
-                        else -> "还没有调料，点右下角 + 添加"
-                    },
-                    icon = {
-                        Icon(
-                            Icons.Filled.Kitchen,
-                            contentDescription = null,
-                            modifier = Modifier.size(56.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            LazyVerticalGrid(
+                // 自适应而不是写死 3 列：手机竖屏正好 3 列，横屏/平板自动排更多，
+                // 免得每张卡被撑成一大块。下限定 100dp 是按「360dp 手机排 3 列」倒推的。
+                columns = GridCells.Adaptive(minSize = 100.dp),
+                modifier = Modifier.fillMaxSize(),
+                // 底部留够：悬浮按钮 56dp + 16dp 边距，再加一个卡片标题的高度，
+                // 最后一行才能整个滑出按钮的遮挡
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 120.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // 提醒栏、搜索框、两行筛选项都当网格的表头，往下滑就跟着滑走。
+                // 它们原先钉在顶上，640dp 的手机上要吃掉一半多，网格只剩不到
+                // 150dp，卡片底部会被导航栏切掉。
+                // 「食材 / 调料」留在网格外面：那是和底部 Tab 一个级别的大类切换，
+                // 滑走了想切回来还得先滑回顶部。
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column {
+                        CompactSearchField(
+                            value = state.query,
+                            onValueChange = viewModel::onQueryChange,
+                            placeholder = "搜索食材或备注",
+                            modifier = Modifier.padding(vertical = 6.dp),
                         )
-                    },
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
+
+                        // 调料不再细分，所以只有食材大类才出子分类。
+                        // 两行 chip 的横向内边距交给网格的 contentPadding，别再叠一层
+                        if (state.isIngredient && state.categories.isNotEmpty()) {
+                            ChipRow(
+                                options = state.categories,
+                                selected = state.category,
+                                onSelect = viewModel::onCategoryChange,
+                                contentPadding = PaddingValues(horizontal = 0.dp),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+
+                        ChipRow(
+                            options = ExpiryFilter.entries.map { it.label },
+                            selected = state.expiryFilter.label,
+                            onSelect = { label ->
+                                ExpiryFilter.entries.firstOrNull { it.label == label }
+                                    ?.let(viewModel::onExpiryFilterChange)
+                            },
+                            allowClear = false,
+                            contentPadding = PaddingValues(horizontal = 0.dp),
+                        )
+                    }
+                }
+
+                if (state.rows.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        EmptyState(
+                            text = when {
+                                state.expiryFilter == ExpiryFilter.USED_UP -> "还没有用完的条目"
+                                state.totalInBigCategory > 0 -> "没有符合条件的条目"
+                                state.isIngredient -> "还没有食材，点右下角 + 添加，或用收据/截图识别"
+                                else -> "这个分区还空着，点右下角 + 添加"
+                            },
+                            icon = {
+                                Icon(
+                                    Icons.Filled.Kitchen,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(56.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            },
+                        )
+                    }
+                } else {
                     items(state.rows, key = { it.item.id }) { row ->
                         FridgeItemCard(
                             row = row,
@@ -199,59 +229,72 @@ fun FridgeScreen(
                             onDelete = { delete(row) },
                         )
                     }
-                    item { Spacer(Modifier.height(72.dp)) }
                 }
             }
         }
     }
 }
 
-/** 临期/过期汇总卡，两个 chip 分别点进对应筛选；都没有时不显示。 */
+/**
+ * 标题右边那排过期提醒：临期 / 过期 / 已用完各一个 chip，点进对应筛选。
+ *
+ * 三者都没有时一个都不出，标题右边干干净净。
+ * 每个 chip 自带底色 —— 独立站着没有容器了，颜色得自己带，
+ * 不然「过期」和「已用完」看着一样重。
+ */
 @Composable
-private fun ExpiryBanner(
+private fun ExpiryChips(
     nearCount: Int,
     expiredCount: Int,
+    usedUpCount: Int,
     onNearClick: () -> Unit,
     onExpiredClick: () -> Unit,
+    onUsedUpClick: () -> Unit,
 ) {
-    if (nearCount == 0 && expiredCount == 0) return
-
-    val hasExpired = expiredCount > 0
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hasExpired) {
-                MaterialTheme.colorScheme.errorContainer
-            } else {
-                MaterialTheme.colorScheme.secondaryContainer
-            },
-        ),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Filled.WarningAmber,
-                contentDescription = null,
-                tint = expiryColor(
-                    if (hasExpired) ExpiryStatus.EXPIRED else ExpiryStatus.NEAR
-                ) ?: MaterialTheme.colorScheme.primary,
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (nearCount > 0) {
+            ExpiryChip(
+                label = "临期 $nearCount",
+                container = MaterialTheme.colorScheme.secondaryContainer,
+                onClick = onNearClick,
             )
-            Spacer(Modifier.width(8.dp))
-            Text("快过期了", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.weight(1f))
-            if (nearCount > 0) {
-                AssistChip(onClick = onNearClick, label = { Text("临期 $nearCount") })
-            }
-            if (expiredCount > 0) {
-                Spacer(Modifier.width(8.dp))
-                AssistChip(onClick = onExpiredClick, label = { Text("过期 $expiredCount") })
-            }
+        }
+        if (expiredCount > 0) {
+            Spacer(Modifier.width(4.dp))
+            ExpiryChip(
+                label = "过期 $expiredCount",
+                container = MaterialTheme.colorScheme.errorContainer,
+                onClick = onExpiredClick,
+            )
+        }
+        if (usedUpCount > 0) {
+            Spacer(Modifier.width(4.dp))
+            ExpiryChip(
+                label = "已用完 $usedUpCount",
+                container = MaterialTheme.colorScheme.surfaceVariant,
+                onClick = onUsedUpClick,
+            )
         }
     }
 }
 
+@Composable
+private fun ExpiryChip(label: String, container: Color, onClick: () -> Unit) {
+    AssistChip(
+        onClick = onClick,
+        label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+        colors = AssistChipDefaults.assistChipColors(containerColor = container),
+        border = null,
+    )
+}
+
+/**
+ * 网格里的一张库存卡：上图下文。
+ *
+ * 三列之后每张卡只有一百来 dp 宽，装不下原来那行的「分类 + 关联菜名 + 完整保质期」，
+ * 所以只留最要紧的三样：菜名、用量、保质期状态。分类和关联菜名点开就能看到，
+ * 封面右上角那个是删除（删完有撤销，误点也收得回）。
+ */
 @Composable
 private fun FridgeItemCard(
     row: FridgeRow,
@@ -265,73 +308,69 @@ private fun FridgeItemCard(
 
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        // 正文用近米色、封面那块是琥珀，两块深浅拉开才看得出分段
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CoverImage(
-                path = item.photoPath,
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = item.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    if (amount.isNotEmpty()) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = amount,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                val tags = listOfNotNull(
-                    item.category.takeIf { it.isNotBlank() },
-                    row.recipeName?.let { "关联：$it" },
+        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
+            CoverImage(path = item.photoPath, modifier = Modifier.fillMaxSize())
+            // 垫一层实心底才压得住深浅不一的封面图
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .clickable(onClick = onDelete),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = "删除",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
                 )
-                if (tags.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        tags.forEach { Tag(it) }
-                    }
-                }
+            }
+        }
 
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (accent != null) {
-                        Icon(
-                            Icons.Filled.WarningAmber,
-                            contentDescription = null,
-                            tint = accent,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
-                    }
-                    Text(
-                        text = expiryLine(item),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (amount.isNotEmpty()) {
+                Text(
+                    text = amount,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "删除")
-            }
+            Text(
+                text = compactExpiryLine(item),
+                style = MaterialTheme.typography.bodySmall,
+                color = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
+
+/**
+ * 网格卡片窄，保质期只留最要紧的那半句。
+ *
+ * 原来那行「保质期至 2026-10-12 · 已过期 2 天」在 100dp 宽里会被截成
+ * 「保质期至 202…」—— 具体哪天到期远不如「还剩几天」有用。
+ */
+private fun compactExpiryLine(item: FridgeItem): String =
+    item.expiryDate?.let { expiryText(it) } ?: "未填保质期"
 
 private fun expiryLine(item: FridgeItem): String {
     val expiry = item.expiryDate ?: return "未填保质期"

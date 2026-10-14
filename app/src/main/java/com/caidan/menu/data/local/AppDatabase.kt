@@ -25,7 +25,7 @@ import com.caidan.menu.data.local.entity.VideoLink
         CookRecord::class,
         FridgeItem::class,
     ],
-    version = 4,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -86,6 +86,37 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 → v5：冰箱条目加「用完的时间」，用于「用完两周后自动清掉」。
+         *
+         * 已有的 0 库存条目统一以**升级这一刻**为起点。不能拿 `createdAt` 回填 ——
+         * 那是买进来的时间，可能远早于用完的时间，会让上周刚用完的东西当场被清掉。
+         *
+         * 同样必须是可空、不带 DEFAULT 的列，理由见 [MIGRATION_3_4]。
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `fridge_items` ADD COLUMN `usedUpAt` INTEGER")
+                db.execSQL(
+                    "UPDATE `fridge_items` SET `usedUpAt` = ? WHERE `quantity` <= 0",
+                    arrayOf(System.currentTimeMillis()),
+                )
+            }
+        }
+
+        /**
+         * v5 → v6：菜谱加「在不在菜单里」。
+         *
+         * 带 `DEFAULT 0`：存量菜谱一律不在菜单里 —— 菜单是自己挑出来的名单，
+         * 不能让用户升级完发现菜单里塞满了全部菜谱。实体那边也得写
+         * `@ColumnInfo(defaultValue = "0")` 与之对应，理由见 [MIGRATION_3_4]。
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `recipes` ADD COLUMN `inMenu` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -95,7 +126,13 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "menu.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                ).addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                )
                     .build()
                     .also { instance = it }
             }

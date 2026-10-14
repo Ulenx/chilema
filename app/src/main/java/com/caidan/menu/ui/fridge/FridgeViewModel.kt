@@ -20,6 +20,7 @@ enum class ExpiryFilter(val label: String) {
     ALL("全部"),
     NEAR("临期"),
     EXPIRED("过期"),
+    USED_UP("已用完"),
 }
 
 /** 列表里的一行：库存 + 算好的保质期状态 + 关联菜名。 */
@@ -39,6 +40,8 @@ data class FridgeUiState(
     val rows: List<FridgeRow> = emptyList(),
     val nearCount: Int = 0,
     val expiredCount: Int = 0,
+    /** 扣到 0 的条数。这些从主列表挪进了「已用完」，只在那儿看得到。 */
+    val usedUpCount: Int = 0,
     /** 当前大类的总条数，用来区分「一条都没有」和「筛没了」 */
     val totalInBigCategory: Int = 0,
 ) {
@@ -110,6 +113,7 @@ class FridgeViewModel(
         // 提醒卡按整个大类统计，不受子分类/搜索影响，免得一筛选数字就变
         val near = inBig.count { rowStatus(it) == ExpiryStatus.NEAR }
         val expired = inBig.count { rowStatus(it) == ExpiryStatus.EXPIRED }
+        val usedUp = inBig.count { it.quantity <= 0.0 }
 
         val keyword = f.query.trim()
         val rows = inBig
@@ -119,7 +123,7 @@ class FridgeViewModel(
                     it.name.contains(keyword, ignoreCase = true) ||
                     it.note.contains(keyword, ignoreCase = true)
             }
-            .filter { matchesFilter(rowStatus(it), f.expiryFilter) }
+            .filter { matchesFilter(it, f.expiryFilter) }
             .map {
                 FridgeRow(
                     item = it,
@@ -138,20 +142,25 @@ class FridgeViewModel(
             rows = rows,
             nearCount = near,
             expiredCount = expired,
+            usedUpCount = usedUp,
             totalInBigCategory = inBig.size,
         )
     }
 
-    private fun matchesFilter(status: ExpiryStatus, filter: ExpiryFilter): Boolean = when (filter) {
-        ExpiryFilter.ALL -> true
-        ExpiryFilter.NEAR -> status == ExpiryStatus.NEAR
-        ExpiryFilter.EXPIRED -> status == ExpiryStatus.EXPIRED
+    /**
+     * 用完的条目从主视图挪进「已用完」：东西吃完了就不该再占着冰箱列表，
+     * 但那条记录上的照片、备注、保质期还有用，所以只藏不删。
+     */
+    private fun matchesFilter(item: FridgeItem, filter: ExpiryFilter): Boolean = when (filter) {
+        ExpiryFilter.ALL -> item.quantity > 0.0
+        ExpiryFilter.USED_UP -> item.quantity <= 0.0
+        ExpiryFilter.NEAR -> rowStatus(item) == ExpiryStatus.NEAR
+        ExpiryFilter.EXPIRED -> rowStatus(item) == ExpiryStatus.EXPIRED
     }
 
     /**
      * 条目的保质期状态。数量已经扣到 0 的（做菜扣完了）一律当「无状态」：
      * 东西都吃完了，还标红提醒「快过期了」、还占着「临期 N」的名额是错的。
-     * 条目本身仍留在列表里可见，只是不再报警。
      */
     private fun rowStatus(item: FridgeItem): ExpiryStatus =
         if (item.quantity <= 0.0) ExpiryStatus.NONE else expiryStatusOf(item.expiryDate)

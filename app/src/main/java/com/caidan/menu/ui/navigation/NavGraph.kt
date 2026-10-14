@@ -1,12 +1,13 @@
 package com.caidan.menu.ui.navigation
 
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Kitchen
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -62,7 +64,7 @@ private data class TabItem(
 private val tabs = listOf(
     TabItem(Routes.RECIPES, "菜谱", Icons.Filled.Restaurant),
     TabItem(Routes.FRIDGE, "食材", Icons.Filled.Kitchen),
-    TabItem(Routes.SHOPPING, "购物", Icons.Filled.ShoppingCart),
+    TabItem(Routes.SHOPPING, "菜单", Icons.Filled.RestaurantMenu),
     TabItem(Routes.STATS, "统计", Icons.Filled.BarChart),
     TabItem(Routes.SETTINGS, "设置", Icons.Filled.Settings),
 )
@@ -97,7 +99,9 @@ fun MenuNavGraph(container: AppContainer) {
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
+                // Material 默认 80dp。手机竖屏上那一条太厚了，压到 2/3。
+                // 显式给 height 就能盖过它内部的 defaultMinSize
+                NavigationBar(modifier = Modifier.height(54.dp)) {
                     tabs.forEach { tab ->
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
@@ -129,6 +133,16 @@ fun MenuNavGraph(container: AppContainer) {
                     container = container,
                     onOpenRecipe = ::openRecipe,
                     onNewRecipe = { openEditor(0L, it) },
+                    onOpenMenu = {
+                        // 和点底部 Tab 一个走法：保住各自的页面状态，也不往返回栈里堆
+                        navController.navigate(Routes.SHOPPING) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                 )
             }
 

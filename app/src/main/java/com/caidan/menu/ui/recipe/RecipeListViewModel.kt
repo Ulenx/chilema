@@ -8,9 +8,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 enum class SortMode(val label: String) {
     RECENT("最近添加"),
@@ -19,77 +19,103 @@ enum class SortMode(val label: String) {
     NAME("按名称"),
 }
 
-/** 类型筛选 chip 的选项。「全部」= 不筛类型。 */
-val TYPE_LABELS = listOf("全部", "家常菜", "甜点")
+/**
+ * 左栏选中的那一项。外卖点单式的分类栏把「类型」和「分类」两个维度压成了一维，
+ * 用户不必再在两行 chip 之间来回点。
+ *
+ * 「甜点」走 type 而不是分类：type 才是决定烘焙参数那块 UI 出不出、
+ * 以及新建菜谱时默认类型的东西。
+ */
+sealed interface RailSelection {
+    /**
+     * LazyColumn 的稳定 key。
+     *
+     * 不能拿标签当 key —— 分类名是用户随手填的，真有人把分类就叫「甜点」，
+     * 那就跟特殊项撞上了。
+     */
+    val key: String
 
-/** chip 标签 → type 值。认不出来的（含「全部」）一律当不筛。 */
-fun typeOfLabel(label: String): String? = when (label) {
-    "家常菜" -> Recipe.TYPE_DISH
-    "甜点" -> Recipe.TYPE_DESSERT
-    else -> null
+    /** 全部菜谱，不筛。 */
+    data object All : RailSelection {
+        override val key = "all"
+    }
+
+    /** 只看甜点。 */
+    data object Dessert : RailSelection {
+        override val key = "dessert"
+    }
+
+    /** 只看某个分类。 */
+    data class Category(val name: String) : RailSelection {
+        override val key get() = "category:$name"
+    }
 }
 
-/** type 值 → chip 标签，给 ChipRow 的 selected 用。 */
-fun labelOfType(type: String?): String = when (type) {
-    Recipe.TYPE_DISH -> "家常菜"
-    Recipe.TYPE_DESSERT -> "甜点"
-    else -> "全部"
-}
+/** 左栏的一项：能选的范围 + 这一项下的菜谱数。 */
+data class RailEntry(
+    val selection: RailSelection,
+    val label: String,
+    val count: Int,
+)
 
 /**
- * 列表的四个筛选条件。
+ * 列表的筛选条件。分类筛选已经并进左栏（[RailSelection]），不在这里。
  *
- * 打包成一个状态不是为了好看：`combine` 只有 2–5 个流的重载，而这四个筛选加上
- * 菜谱流和评分流就是 6 个，超过重载上限。打包后正好降到 3 个。
+ * 打包成一个状态不是为了好看：`combine` 只有 2–5 个流的重载，而这些筛选加上
+ * 菜谱流和评分流会超过重载上限。打包后正好降到 3 个。
  */
 private data class RecipeFilters(
     val query: String = "",
     val sort: SortMode = SortMode.RECENT,
-    val category: String? = null,
-    val type: String? = null,
+    val rail: RailSelection = RailSelection.All,
 )
 
 data class RecipeListUiState(
     val recipes: List<Recipe> = emptyList(),
     /** 菜谱 id → 平均星级。没有打过分的不在表里。 */
     val ratings: Map<Long, Double> = emptyMap(),
-    val categories: List<String> = emptyList(),
+    /** 左栏的条目，带计数。 */
+    val railEntries: List<RailEntry> = emptyList(),
+    val selectedRail: RailSelection = RailSelection.All,
     val query: String = "",
     val sortMode: SortMode = SortMode.RECENT,
-    val selectedCategory: String? = null,
-    val selectedType: String? = null,
     val totalCount: Int = 0,
+    /**
+     * 菜单里一共攒了几道。
+     *
+     * 不受左边分类栏和搜索影响 —— 底部那条提示说的是「我挑了多少」，
+     * 跟当前在看哪一栏没关系。
+     */
+    val menuCount: Int = 0,
 )
 
-class RecipeListViewModel(repository: RecipeRepository) : ViewModel() {
+class RecipeListViewModel(private val repository: RecipeRepository) : ViewModel() {
 
     private val _filters = MutableStateFlow(RecipeFilters())
 
-    // 菜谱和甜点合并成一个列表，靠上面的类型 chip 筛，不再各开一个 Tab
+    // 菜谱和甜点合并成一个列表，靠左栏筛，不再各开一个 Tab
     private val recipes = repository.observeAll()
     private val ratings = repository.observeRatings()
 
-    /** 分类 chip 跟着类型筛选走：只看甜点时不该把家常菜的分类也列出来。 */
-    val categories: StateFlow<List<String>> =
-        combine(recipes, _filters) { list, f -> list.filterByType(f.type) }
-            .map { list -> list.map { it.category }.filter { it.isNotBlank() }.distinct().sorted() }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
     val uiState: StateFlow<RecipeListUiState> =
         combine(recipes, ratings, _filters) { list, ratingRows, f ->
-            val scoped = list.filterByType(f.type)
-            val filtered = scoped
-                .filter { f.category == null || it.category == f.category }
+            val entries = list.toRailEntries()
+            // 选中的项可能已经不存在了（最后一道甜点被删掉、分类名被改掉），
+            // 回落到「全部」，免得停在「左栏没这项、右边也空着」的死状态
+            val rail = f.rail.takeIf { sel -> entries.any { it.selection == sel } }
+                ?: RailSelection.All
+            val filtered = list
+                .filterByRail(rail)
                 .filter { f.query.isBlank() || it.matches(f.query) }
             RecipeListUiState(
                 recipes = filtered.sortedWith(f.sort.comparator()),
                 ratings = ratingRows.associate { it.recipeId to (it.avgRating ?: 0.0) },
+                railEntries = entries,
+                selectedRail = rail,
                 query = f.query,
                 sortMode = f.sort,
-                selectedCategory = f.category,
-                selectedType = f.type,
-                // 用类型筛选后的数量，空态才分得清「真的一道菜都没有」和「这个筛选下没有」
-                totalCount = scoped.size,
+                totalCount = list.size,
+                menuCount = list.count { it.inMenu },
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecipeListUiState())
 
@@ -97,16 +123,44 @@ class RecipeListViewModel(repository: RecipeRepository) : ViewModel() {
 
     fun onSortChange(mode: SortMode) = _filters.update { it.copy(sort = mode) }
 
-    fun onCategoryChange(value: String?) = _filters.update { it.copy(category = value) }
+    fun onRailSelect(value: RailSelection) = _filters.update { it.copy(rail = value) }
 
     /**
-     * 切类型时顺手清掉分类筛选：分类是跟着类型走的，
-     * 留着「川菜」再切到甜点会变成空列表，而分类 chip 里根本没有「川菜」可选，人就卡死了。
+     * 把一道菜加进 / 移出「菜单」。
+     *
+     * 只动名单，菜谱本身不受影响 —— 菜单是一份精选，不是「删食谱」。
      */
-    fun onTypeChange(value: String?) = _filters.update { it.copy(type = value, category = null) }
+    fun toggleMenu(recipe: Recipe) {
+        viewModelScope.launch { repository.setInMenu(recipe.id, !recipe.inMenu) }
+    }
 
-    private fun List<Recipe>.filterByType(type: String?): List<Recipe> =
-        if (type == null) this else filter { it.type == type }
+    /**
+     * 左栏的条目：全部 + 甜点 + 各个分类，各带菜谱数。
+     *
+     * 计数按全部菜谱算，不受搜索词影响 —— 它是分类本身的规模，不是当前筛选的结果。
+     * 计数为 0 的不列：分类本来就从现有菜谱里长出来，只有「甜点」可能是 0。
+     */
+    private fun List<Recipe>.toRailEntries(): List<RailEntry> {
+        val entries = mutableListOf(RailEntry(RailSelection.All, "全部", size))
+        val desserts = count { it.type == Recipe.TYPE_DESSERT }
+        if (desserts > 0) entries += RailEntry(RailSelection.Dessert, "甜点", desserts)
+        map { it.category.trim() }
+            .filter { it.isNotEmpty() }
+            .groupingBy { it }
+            .eachCount()
+            .toList()
+            .sortedBy { (name, _) -> name }
+            .forEach { (name, count) ->
+                entries += RailEntry(RailSelection.Category(name), name, count)
+            }
+        return entries
+    }
+
+    private fun List<Recipe>.filterByRail(rail: RailSelection): List<Recipe> = when (rail) {
+        RailSelection.All -> this
+        RailSelection.Dessert -> filter { it.type == Recipe.TYPE_DESSERT }
+        is RailSelection.Category -> filter { it.category.trim() == rail.name }
+    }
 
     private fun Recipe.matches(query: String): Boolean {
         val q = query.trim()

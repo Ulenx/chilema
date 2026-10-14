@@ -68,6 +68,7 @@ import com.caidan.menu.data.local.entity.Recipe
 import com.caidan.menu.ui.AppViewModelProvider
 import com.caidan.menu.ui.components.CoverImage
 import com.caidan.menu.ui.components.LoadingOverlay
+import com.caidan.menu.ui.components.PageHeader
 import com.caidan.menu.util.ImageStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -114,8 +115,11 @@ fun RecipeEditScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(if (state.recipeId > 0) "编辑菜谱" else "新建菜谱") },
+            // 和外面五个主页用同一个 PageHeader：那几页是左对齐两行，
+            // 这里原来还是 Material 的居中单行，进编辑页时头顶会跳一下
+            PageHeader(
+                title = if (state.recipeId > 0) "编辑菜谱" else "新建菜谱",
+                subtitle = "粘贴、截图或手打，都行",
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")

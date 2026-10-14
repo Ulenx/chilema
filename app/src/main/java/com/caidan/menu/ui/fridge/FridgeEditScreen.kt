@@ -4,6 +4,9 @@ package com.caidan.menu.ui.fridge
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -65,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +81,7 @@ import com.caidan.menu.ui.AppViewModelProvider
 import com.caidan.menu.ui.components.ChipRow
 import com.caidan.menu.ui.components.CoverImage
 import com.caidan.menu.ui.components.LoadingOverlay
+import com.caidan.menu.ui.components.PageHeader
 import com.caidan.menu.ui.components.PhotoCropper
 import com.caidan.menu.ui.components.SectionTitle
 import com.caidan.menu.util.ImageStore
@@ -234,8 +239,10 @@ fun FridgeEditScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(if (state.isEditing) "编辑$kindLabel" else "添加$kindLabel") },
+            // 和外面五个主页用同一个 PageHeader，免得进编辑页时头顶跳一下
+            PageHeader(
+                title = if (state.isEditing) "编辑$kindLabel" else "添加$kindLabel",
+                subtitle = "填完点右上角保存",
                 navigationIcon = {
                     IconButton(onClick = onClose) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -321,25 +328,12 @@ fun FridgeEditScreen(
                             Spacer(Modifier.height(8.dp))
                             // 批量整理时多条共用一张图没意义，这行只在单条模式出现
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                CoverImage(
+                                PhotoSlot(
                                     path = state.photoPath,
-                                    modifier = Modifier.size(56.dp)
-                                        .clip(RoundedCornerShape(10.dp)),
+                                    onClick = { pickFor(PhotoTarget.ITEM) },
                                 )
-                                Spacer(Modifier.width(12.dp))
-                                OutlinedButton(onClick = { pickFor(PhotoTarget.ITEM) }) {
-                                    Icon(
-                                        Icons.Filled.Image,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        if (state.photoPath.isNullOrBlank()) "加张图"
-                                        else "换一张"
-                                    )
-                                }
                                 if (!state.photoPath.isNullOrBlank()) {
+                                    Spacer(Modifier.width(8.dp))
                                     IconButton(onClick = { viewModel.onPhotoSelected(null) }) {
                                         Icon(Icons.Filled.Clear, contentDescription = "去掉图片")
                                     }
@@ -478,6 +472,52 @@ private fun AiImportCard(
                     Spacer(Modifier.width(6.dp))
                     Text("买菜截图")
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 条目的照片位。空着的时候它本身就是「加张图」按钮，点一下去选；
+ * 有图了就显示图，再点还是去换。
+ *
+ * 原来是「一个灰占位图 + 旁边一个『加张图』按钮」，中间还隔着 12dp ——
+ * 那个占位图本来就是给这张照片留的位置，入口塞进它里面更直接，
+ * 也省掉一行白白占的宽度。
+ */
+@Composable
+private fun PhotoSlot(path: String?, onClick: () -> Unit) {
+    val hasPhoto = !path.isNullOrBlank()
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (hasPhoto) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh
+            )
+            .border(
+                width = 1.dp,
+                color = if (hasPhoto) Color.Transparent else MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (hasPhoto) {
+            CoverImage(path = path, modifier = Modifier.fillMaxSize())
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+                Text(
+                    text = "加张图",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

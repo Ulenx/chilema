@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Kitchen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WarningAmber
@@ -49,11 +50,16 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -103,6 +109,32 @@ fun FridgeScreen(
             )
             if (result == SnackbarResult.ActionPerformed) viewModel.restore(row.item)
         }
+    }
+
+    // 一键清空是批量的，删了就找不回来（没有逐条撤销那一套），所以先问一句
+    var confirmingClear by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.messages.collect { snackbar.showSnackbar(it) }
+    }
+
+    if (confirmingClear) {
+        AlertDialog(
+            onDismissRequest = { confirmingClear = false },
+            title = { Text("清空用完的条目？") },
+            text = { Text("「${FridgeItem.bigCategoryLabel(state.bigCategory)}」下 ${state.rows.size} 件用完的会一起删掉，删了找不回来。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingClear = false
+                        viewModel.clearUsedUp()
+                    }
+                ) { Text("清空") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingClear = false }) { Text("取消") }
+            },
+        )
     }
 
     Scaffold(
@@ -197,6 +229,36 @@ fun FridgeScreen(
                             allowClear = false,
                             contentPadding = PaddingValues(horizontal = 0.dp),
                         )
+                    }
+                }
+
+                // 「全部清空」只长在「已用完」这一档里：别的档位没有批量可清的东西。
+                // 顺带把那两周的规则说出来 —— 不清的话它自己也到点会被清掉，
+                // 这件事本来就藏在代码里，用户看不见
+                if (state.expiryFilter == ExpiryFilter.USED_UP && state.rows.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "会保留两周，过期自动清掉",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { confirmingClear = true }) {
+                                Icon(
+                                    Icons.Filled.DeleteSweep,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("全部清空")
+                            }
+                        }
                     }
                 }
 

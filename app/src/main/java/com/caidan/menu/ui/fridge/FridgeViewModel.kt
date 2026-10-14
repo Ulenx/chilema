@@ -8,10 +8,12 @@ import com.caidan.menu.data.repo.FridgeRepository
 import com.caidan.menu.data.repo.RecipeRepository
 import com.caidan.menu.util.ExpiryStatus
 import com.caidan.menu.util.expiryStatusOf
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -61,6 +63,10 @@ class FridgeViewModel(
 
     private val filters = MutableStateFlow(Filters())
 
+    /** 一次性提示（比如「已清掉 3 件」），页面收下来弹 snackbar。 */
+    private val _messages = Channel<String>(Channel.BUFFERED)
+    val messages = _messages.receiveAsFlow()
+
     val state: StateFlow<FridgeUiState> = combine(
         fridgeRepository.observeAll(),
         recipeRepository.observeAll(),
@@ -96,6 +102,22 @@ class FridgeViewModel(
 
     fun restore(item: FridgeItem) {
         viewModelScope.launch { fridgeRepository.save(item.copy(id = 0L)) }
+    }
+
+    /**
+     * 一键清掉当前大类下所有用完的条目。
+     *
+     * 只在大类范围内清：按钮长在「食材 / 已用完」这样的具体视图里，
+     * 顺手把调料、酒柜的也清了会让人意外。
+     */
+    fun clearUsedUp() {
+        viewModelScope.launch {
+            val removed = fridgeRepository.clearUsedUp(filters.value.bigCategory)
+            _messages.send(
+                if (removed > 0) "已清掉 $removed 件用完的"
+                else "没有用完的条目"
+            )
+        }
     }
 
     // ---- 内部 ----

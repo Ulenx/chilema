@@ -26,6 +26,9 @@ class FridgeRepository(private val dao: FridgeDao) {
      *
      * 到期自动清是为了不让「已用完」越堆越多 —— 它只是个缓冲，不是归档。
      */
+    /** 一键清掉某个大类下所有用完的条目，返回清掉的条数。 */
+    suspend fun clearUsedUp(bigCategory: String): Int = dao.deleteUsedUp(bigCategory)
+
     suspend fun purgeUsedUp(): Int = dao.purgeUsedUpBefore(
         System.currentTimeMillis() - USED_UP_RETENTION_DAYS * 24L * 60 * 60 * 1000
     )

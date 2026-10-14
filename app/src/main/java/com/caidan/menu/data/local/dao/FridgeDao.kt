@@ -55,6 +55,16 @@ interface FridgeDao {
     )
     suspend fun purgeUsedUpBefore(cutoff: Long): Int
 
+    /**
+     * 一键清掉某个大类下所有用完的条目，返回清掉的条数。
+     *
+     * 和 [purgeUsedUpBefore] 的区别：这个不看到期时间 —— 用户主动点的「全部清空」，
+     * 就是想立刻清干净，不必等那两周。限定大类是因为按钮长在「食材 / 已用完」
+     * 这样的具体视图里，顺手把别的分区也清了会让人意外。
+     */
+    @Query("DELETE FROM fridge_items WHERE quantity <= 0 AND bigCategory = :bigCategory")
+    suspend fun deleteUsedUp(bigCategory: String): Int
+
     @Delete
     suspend fun delete(item: FridgeItem)
 

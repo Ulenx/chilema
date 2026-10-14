@@ -40,8 +40,6 @@ data class FridgeUiState(
     val rows: List<FridgeRow> = emptyList(),
     val nearCount: Int = 0,
     val expiredCount: Int = 0,
-    /** 扣到 0 的条数。这些从主列表挪进了「已用完」，只在那儿看得到。 */
-    val usedUpCount: Int = 0,
     /** 当前大类的总条数，用来区分「一条都没有」和「筛没了」 */
     val totalInBigCategory: Int = 0,
 ) {
@@ -113,7 +111,6 @@ class FridgeViewModel(
         // 提醒卡按整个大类统计，不受子分类/搜索影响，免得一筛选数字就变
         val near = inBig.count { rowStatus(it) == ExpiryStatus.NEAR }
         val expired = inBig.count { rowStatus(it) == ExpiryStatus.EXPIRED }
-        val usedUp = inBig.count { it.quantity <= 0.0 }
 
         val keyword = f.query.trim()
         val rows = inBig
@@ -142,7 +139,6 @@ class FridgeViewModel(
             rows = rows,
             nearCount = near,
             expiredCount = expired,
-            usedUpCount = usedUp,
             totalInBigCategory = inBig.size,
         )
     }

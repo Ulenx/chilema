@@ -121,10 +121,8 @@ fun FridgeScreen(
                     ExpiryChips(
                         nearCount = state.nearCount,
                         expiredCount = state.expiredCount,
-                        usedUpCount = state.usedUpCount,
                         onNearClick = { viewModel.onExpiryFilterChange(ExpiryFilter.NEAR) },
                         onExpiredClick = { viewModel.onExpiryFilterChange(ExpiryFilter.EXPIRED) },
-                        onUsedUpClick = { viewModel.onExpiryFilterChange(ExpiryFilter.USED_UP) },
                     )
                 },
             )
@@ -236,20 +234,20 @@ fun FridgeScreen(
 }
 
 /**
- * 标题右边那排过期提醒：临期 / 过期 / 已用完各一个 chip，点进对应筛选。
+ * 标题右边那排提醒：临期和过期各一个 chip，点进对应筛选。
  *
- * 三者都没有时一个都不出，标题右边干干净净。
- * 每个 chip 自带底色 —— 独立站着没有容器了，颜色得自己带，
- * 不然「过期」和「已用完」看着一样重。
+ * 只放这两个 —— 它们是要「赶紧处理」的事，值得顶在标题旁边一直看得见。
+ * 「已用完」是吃完了的正常结果，不催人，放在下面的筛选行里就行。
+ *
+ * 两者都没有时一个都不出，标题右边干干净净。
+ * 每个 chip 自带底色 —— 独立站着没有容器了，颜色得自己带。
  */
 @Composable
 private fun ExpiryChips(
     nearCount: Int,
     expiredCount: Int,
-    usedUpCount: Int,
     onNearClick: () -> Unit,
     onExpiredClick: () -> Unit,
-    onUsedUpClick: () -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (nearCount > 0) {
@@ -265,14 +263,6 @@ private fun ExpiryChips(
                 label = "过期 $expiredCount",
                 container = MaterialTheme.colorScheme.errorContainer,
                 onClick = onExpiredClick,
-            )
-        }
-        if (usedUpCount > 0) {
-            Spacer(Modifier.width(4.dp))
-            ExpiryChip(
-                label = "已用完 $usedUpCount",
-                container = MaterialTheme.colorScheme.surfaceVariant,
-                onClick = onUsedUpClick,
             )
         }
     }
